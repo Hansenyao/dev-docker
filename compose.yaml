@@ -28,8 +28,8 @@ services:
 
   dev:
     build: .
-    image: ai-dev:latest
-    container_name: ai-dev
+    image: ai-dev-container:latest
+    container_name: ai-dev-container
     network_mode: service:docker
     depends_on:
       docker:

@@ -2,7 +2,7 @@
 
 A Docker development environment for running Claude Code on macOS without giving it access to the rest of your Mac.
 
-- Claude runs in the `ai-dev` container as `ai-coder` and can use `--dangerously-skip-permissions`.
+- Claude runs in the `ai-dev-container` container as `ai-coder` and can use `--dangerously-skip-permissions`.
 - It sees only `~/ai-workspace` (mounted at `/workspace`) plus its own state in `~/.ai-dev`.
 - It pushes to GitHub with fine-grained tokens (one per account or organization) limited to the repositories you choose.
 - It can run Docker (databases, etc.) in a nested engine that is separate from your Docker Desktop containers.
@@ -23,10 +23,10 @@ Not protected: anything inside the container (workspace code, the token) can be 
 3. `make setup` in a terminal (it prompts for input) — creates the directories, asks for the git name/email used for commits (also settable later with `git config --global user.name ...` inside the container, which writes to `~/.ai-dev/git/config`), and tells you where to save the tokens: `~/.ai-dev/secrets/github/<owner>`, named after the GitHub account or organization (case-insensitive).
 4. `make build && make up`
 5. `make check` — must end with `all checks passed`.
-6. `make vscode` — opens a dedicated VS Code window. Attaching needs the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension (`ms-vscode-remote.remote-containers`); `make vscode` installs it automatically on first run into the dedicated instance's own extensions directory (`~/Library/Application Support/ai-dev-vscode/extensions`), so your normal VS Code gets nothing installed. Then Cmd+Shift+P → **Dev Containers: Attach to Running Container** → `ai-dev`, and open `/workspace/<project>`.
+6. `make vscode` — opens a dedicated VS Code window. Attaching needs the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension (`ms-vscode-remote.remote-containers`); `make vscode` installs it automatically on first run into the dedicated instance's own extensions directory (`~/Library/Application Support/ai-dev-vscode/extensions`), so your normal VS Code gets nothing installed. Then Cmd+Shift+P → **Dev Containers: Attach to Running Container** → `ai-dev-container`, and open `/workspace/<project>`.
 7. In the VS Code terminal run `claude` and log in (open the printed URL in your Mac browser and paste the code back).
 
-Always use `make vscode` to attach, and do not install Dev Containers in your normal VS Code to attach to `ai-dev`: the extension forwards your Mac's SSH agent into the container whenever VS Code has `SSH_AUTH_SOCK` set (macOS sets it for every app), and it has no setting to turn that off. The dedicated instance is started without `SSH_AUTH_SOCK` and with `vscode/settings.json`, which disables git config copying and git/Docker credential forwarding.
+Always use `make vscode` to attach, and do not install Dev Containers in your normal VS Code to attach to `ai-dev-container`: the extension forwards your Mac's SSH agent into the container whenever VS Code has `SSH_AUTH_SOCK` set (macOS sets it for every app), and it has no setting to turn that off. The dedicated instance is started without `SSH_AUTH_SOCK` and with `vscode/settings.json`, which disables git config copying and git/Docker credential forwarding.
 
 ## Daily use
 
