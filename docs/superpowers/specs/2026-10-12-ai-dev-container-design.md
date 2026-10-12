@@ -196,7 +196,7 @@ dev-docker/
 | `make up` | `docker compose up -d`; first checks that mount sources such as `~/.ai-dev/git` and `~/.ai-dev/secrets` exist, and asks the user to run `make setup` if not |
 | `make down` | `docker compose down` (volumes are kept) |
 | `make shell` | Opens a bash shell in `dev` as ai-coder |
-| `make check` | Host side: `docker run --rm -v "$HOME/Documents:/x" alpine ls /x` **must fail**; in container: runs `ai-dev-check` and `smoke-test` |
+| `make check` | Host side: `docker run --rm -v "$HOME:/probe:ro" alpine true` **must fail** with Docker Desktop's "not shared from the host" error; in container: runs `ai-dev-check` and `smoke-test` |
 | `make vscode` | Runs `scripts/host/ai-code`: opens the dedicated VS Code instance (installs the Dev Containers extension on first run) |
 | `make rebuild` | `build --pull`, then `up -d --force-recreate`; persisted data is unaffected |
 
