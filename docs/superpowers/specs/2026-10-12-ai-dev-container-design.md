@@ -139,9 +139,16 @@ Design notes:
 - Expiration: 90 days
 
 ### VS Code credential forwarding
-`vscode/settings.json` lists settings to merge into the VS Code **user settings** that disable: copying the host `~/.gitconfig`, injecting a git credential helper, forwarding Docker credentials, and forwarding the SSH agent (and GPG agent, if a setting exists).
+Verified against the Dev Containers extension 0.470.0 source:
+- Settings exist for git config copying (`dev.containers.copyGitConfig`), the git credential helper (`dev.containers.gitCredentialHelperConfigLocation`), and the Docker credential helper (`dev.containers.dockerCredentialHelper`).
+- **There is no setting for SSH agent forwarding.** The extension forwards the agent whenever the VS Code process environment has a non-empty `SSH_AUTH_SOCK`, and on macOS launchd sets it for every GUI app.
+- GPG agent forwarding happens only if the host has a gpg agent; the host currently has no gpg installed.
 
-**To verify during implementation**: the exact names and effects of these settings, especially whether SSH agent forwarding has its own switch. Regardless of the outcome, `ai-dev-check` results are authoritative.
+Therefore the AI environment uses a **dedicated VS Code instance** instead of the user's normal one:
+- `scripts/host/ai-code` launches VS Code with `SSH_AUTH_SOCK` removed from the environment and with its own `--user-data-dir` and `--extensions-dir` under `~/Library/Application Support/ai-dev-vscode/` (outside the File Sharing list, so the AI cannot reach it even after a VM escape).
+- On launch it installs the Dev Containers extension into that extensions dir if missing and writes `vscode/settings.json` into that instance's user settings: `copyGitConfig: false`, `gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`.
+- The user's normal VS Code, its settings, and its SSH agent behavior are untouched. The dedicated instance runs alongside it as a separate window.
+- `ai-dev-check` remains the authority on whether any credential was forwarded.
 
 ### `ai-dev-check` (runs in the container)
 Prints FAIL and exits non-zero if any of these does not hold:
@@ -172,8 +179,9 @@ dev-docker/
 │   ├── git-credential-ghtoken
 │   ├── gh                      # gh wrapper
 │   ├── ai-dev-check
-│   └── smoke-test
-├── vscode/settings.json
+│   ├── smoke-test
+│   └── host/ai-code            # macOS: dedicated VS Code launcher
+├── vscode/settings.json        # user settings for the dedicated VS Code instance
 ├── docs/superpowers/specs/     # this file
 ├── README.md
 └── CLAUDE.md
@@ -189,6 +197,7 @@ dev-docker/
 | `make down` | `docker compose down` (volumes are kept) |
 | `make shell` | Opens a bash shell in `dev` as ai-coder |
 | `make check` | Host side: `docker run --rm -v "$HOME/Documents:/x" alpine ls /x` **must fail**; in container: runs `ai-dev-check` and `smoke-test` |
+| `make vscode` | Runs `scripts/host/ai-code`: opens the dedicated VS Code instance (installs the Dev Containers extension on first run) |
 | `make rebuild` | `build --pull`, then `up -d --force-recreate`; persisted data is unaffected |
 
 ## 8. Usage
@@ -197,13 +206,13 @@ dev-docker/
 1. Restrict Docker Desktop File Sharing.
 2. Create a Fine-grained Token on GitHub.
 3. `make setup` → `make build` → `make up`.
-4. Merge `vscode/settings.json` into the VS Code user settings.
-5. VS Code: Cmd+Shift+P → Dev Containers: Attach to Running Container → `ai-dev` → open `/workspace/<project>`.
+4. `make vscode` to open the dedicated VS Code instance.
+5. In that instance: Cmd+Shift+P → Dev Containers: Attach to Running Container → `ai-dev` → open `/workspace/<project>`.
 6. Run `claude` in the terminal to log in: there is no browser in the container, so complete authorization in the macOS browser and paste the code back into the terminal.
 7. `make check` passes.
 
 ### Day to day
-- The containers start automatically with Docker Desktop; just attach.
+- The containers start automatically with Docker Desktop; run `make vscode` and attach (always use the dedicated instance, never the normal VS Code, to connect to `ai-dev`).
 - Run `claude --dangerously-skip-permissions` or `claude --continue`.
 - Clone new projects into `~/ai-workspace/` from macOS or from inside the container; no restart needed.
 
@@ -227,6 +236,6 @@ dev-docker/
 - Data inside the container (workspace code, token) can be exfiltrated over the network (accepted).
 - Nested Docker requires `privileged`; the security boundary falls back to the Docker Desktop VM + File Sharing list.
 - `dev` uses `network_mode: service:docker`: if the `docker` container is restarted on its own, `dev` loses networking and must be recreated with `make up`.
-- `docker:dind` startup behavior when listening on TCP without TLS (warning, possible delay) must be confirmed and handled during implementation.
-- Names of the VS Code Dev Containers credential-forwarding settings must be verified during implementation (see section 5).
+- Docker 29 `dockerd` refuses a plain-TCP listener unless `--tls=false` is passed explicitly; the `docker` service command passes it (the dind entrypoint does not add its own defaults when the command starts with `dockerd`).
+- Attaching to `ai-dev` from the normal VS Code instance would forward the macOS SSH agent; the README must say to use `make vscode` only. If gpg is installed on macOS later, GPG agent forwarding must be re-checked with `ai-dev-check`.
 - Only verified on x86_64 Macs.
