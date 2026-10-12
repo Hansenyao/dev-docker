@@ -1,0 +1,11 @@
+# System git config for the ai-dev container.
+# GitHub access uses the token mounted at /run/secrets/ai-dev/github-token.
+[credential "https://github.com"]
+	helper = ghtoken
+# Repositories cloned on macOS with SSH URLs push over HTTPS + token here.
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
+# Single-user container: files under bind mounts may show a different owner.
+[safe]
+	directory = *

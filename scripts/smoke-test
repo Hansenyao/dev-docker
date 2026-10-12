@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Verifies every toolchain in the image works, the git/GitHub wiring is in
+# place, and (unless SMOKE_SKIP_DOCKER=1) the nested Docker engine works.
+set -uo pipefail
+
+failures=0
+work="$(mktemp -d)"
+cleanup() {
+  if [ -f "$work/pg/compose.yaml" ]; then
+    docker compose -p ai-dev-smoke -f "$work/pg/compose.yaml" down -v >/dev/null 2>&1
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+section() { printf '\n== %s\n' "$1"; }
+
+# check NAME COMMAND...: runs COMMAND, prints PASS with its first output line or FAIL with all output.
+check() {
+  local name="$1" out
+  shift
+  if out="$("$@" 2>&1)"; then
+    printf 'PASS %s: %s\n' "$name" "$(printf '%s\n' "$out" | head -n 1)"
+  else
+    printf 'FAIL %s\n%s\n' "$name" "$out"
+    failures=$((failures + 1))
+  fi
+}
+
+# expect NAME EXPECTED COMMAND...: like check, but stdout must equal EXPECTED.
+# stderr is ignored on success (tools like uv log progress there).
+expect() {
+  local name="$1" want="$2" out
+  shift 2
+  out="$("$@" 2>"$work/stderr")"
+  if [ "$out" = "$want" ]; then
+    printf 'PASS %s\n' "$name"
+  else
+    printf 'FAIL %s: expected [%s], got [%s]\n%s\n' "$name" "$want" "$out" "$(cat "$work/stderr")"
+    failures=$((failures + 1))
+  fi
+}
+
+section "Tool versions"
+check node node --version
+check pnpm pnpm --version
+check python3 python3 --version
+check uv uv --version
+check gcc gcc --version
+check clang clang --version
+check cmake cmake --version
+check ninja ninja --version
+check gdb gdb --version
+check rustc rustc --version
+check cargo cargo --version
+check go go version
+check java java -version
+check mvn mvn -v
+check gh /usr/local/bin/gh --version
+check claude claude --version
+check docker docker --version
+check "docker compose" docker compose version
+check psql psql --version
+
+section "Hello world builds"
+cd "$work"
+expect "node runs" "hello" node -e 'console.log("hello")'
+expect "uv runs python with a dependency" "hello" uv run --no-project --with six python -c 'import six; print("hello")'
+
+mkdir -p cpp && cat > cpp/CMakeLists.txt <<'EOF'
+cmake_minimum_required(VERSION 3.20)
+project(hello CXX)
+add_executable(hello main.cpp)
+EOF
+cat > cpp/main.cpp <<'EOF'
+#include <iostream>
+int main() { std::cout << "hello" << std::endl; }
+EOF
+check "cmake configure+build" bash -c 'cmake -S cpp -B cpp/build -G Ninja && cmake --build cpp/build'
+expect "c++ binary runs" "hello" ./cpp/build/hello
+
+check "cargo new" cargo new --quiet --vcs none rusthello
+expect "rust binary runs" "Hello, world!" cargo run --quiet --manifest-path rusthello/Cargo.toml
+
+mkdir -p gohello && cat > gohello/main.go <<'EOF'
+package main
+
+import "fmt"
+
+func main() { fmt.Println("hello") }
+EOF
+check "go mod init" bash -c 'cd gohello && go mod init example.com/hello'
+expect "go runs" "hello" bash -c 'cd gohello && go run .'
+
+mkdir -p java && cat > java/Hello.java <<'EOF'
+public class Hello {
+  public static void main(String[] args) { System.out.println("hello"); }
+}
+EOF
+check "javac" javac -d java java/Hello.java
+expect "java runs" "hello" java -cp java Hello
+
+section "Git and GitHub wiring"
+expect "git credential helper registered" "ghtoken" git config --system --get credential.https://github.com.helper
+expect "scp-style GitHub URL rewritten to HTTPS" "https://github.com/o/r.git" git ls-remote --get-url git@github.com:o/r.git
+expect "ssh:// GitHub URL rewritten to HTTPS" "https://github.com/o/r.git" git ls-remote --get-url ssh://git@github.com/o/r.git
+printf 'ghp_smoke\n' > "$work/token"
+expect "git credential fill uses the token file" "password=ghp_smoke" bash -c \
+  "printf 'protocol=https\nhost=github.com\n\n' | AI_DEV_TOKEN_FILE='$work/token' GIT_TERMINAL_PROMPT=0 git credential fill | grep '^password='"
+expect "gh resolves to the wrapper" "/usr/local/bin/gh" command -v gh
+
+if [ "${SMOKE_SKIP_DOCKER:-0}" = "1" ]; then
+  section "Nested Docker (skipped: SMOKE_SKIP_DOCKER=1)"
+else
+  section "Nested Docker"
+  check "docker daemon reachable" docker version --format '{{.Server.Version}}'
+  check "docker run hello-world" docker run --rm hello-world
+  mkdir -p "$work/pg" && cat > "$work/pg/compose.yaml" <<'EOF'
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: smoke
+    ports:
+      - "55432:5432"
+EOF
+  check "compose up postgres" docker compose -p ai-dev-smoke -f "$work/pg/compose.yaml" up -d --wait
+  check "postgres ready on localhost" bash -c \
+    'for i in $(seq 1 30); do pg_isready -h localhost -p 55432 && exit 0; sleep 1; done; exit 1'
+  expect "postgres query via localhost" "1" env PGPASSWORD=smoke psql -h localhost -p 55432 -U postgres -tAc 'select 1'
+fi
+
+printf '\n'
+if [ "$failures" -eq 0 ]; then
+  echo "smoke-test: all checks passed"
+  exit 0
+fi
+echo "smoke-test: $failures check(s) failed"
+exit 1
