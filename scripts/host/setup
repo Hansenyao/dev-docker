@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# First-time host setup for ai-dev (run on macOS via `make setup`).
+# Creates the workspace and state directories and the git identity used for
+# commits made in the container, and checks for the GitHub token file.
+# Safe to re-run: existing identity and token are never overwritten.
+set -euo pipefail
+
+workspace="$HOME/ai-workspace"
+state="$HOME/.ai-dev"
+git_config="$state/git/config"
+token_file="$state/secrets/github-token"
+
+mkdir -p "$workspace" "$state/claude" "$state/git" "$state/secrets"
+chmod 700 "$state" "$state/secrets"
+
+if git config --file "$git_config" user.name >/dev/null 2>&1 &&
+  git config --file "$git_config" user.email >/dev/null 2>&1; then
+  echo "Git identity already set in $git_config"
+else
+  read -r -p "Git user.name for commits made in the container: " name || true
+  read -r -p "Git user.email for commits made in the container: " email || true
+  if [ -z "${name:-}" ] || [ -z "${email:-}" ]; then
+    echo "Both user.name and user.email are required." >&2
+    exit 1
+  fi
+  git config --file "$git_config" user.name "$name"
+  git config --file "$git_config" user.email "$email"
+  echo "Wrote $git_config"
+fi
+
+if [ -s "$token_file" ]; then
+  chmod 600 "$token_file"
+  echo "GitHub token found at $token_file"
+else
+  cat <<EOF
+
+No GitHub token yet. Create a fine-grained token at
+  https://github.com/settings/personal-access-tokens/new
+  - Repository access: Only select repositories (the ones the AI may push to)
+  - Contents: Read and write
+  - Pull requests: Read and write (optional, for gh pr create)
+  - Do NOT grant Workflows
+  - Expiration: 90 days
+Copy it, then run:
+  pbpaste > "$token_file" && chmod 600 "$token_file"
+EOF
+fi
+
+cat <<EOF
+
+Reminder: Docker Desktop -> Settings -> Resources -> File sharing must list only
+  $workspace
+  $state
+Run 'make check-host' to verify.
+EOF
