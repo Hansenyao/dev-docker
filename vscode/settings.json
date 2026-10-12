@@ -2,5 +2,7 @@
   "dev.containers.copyGitConfig": false,
   "dev.containers.gitCredentialHelperConfigLocation": "none",
   "dev.containers.dockerCredentialHelper": false,
-  "dev.containers.githubCLILoginWithToken": false
+  "dev.containers.githubCLILoginWithToken": false,
+  "git.terminalAuthentication": false,
+  "github.gitAuthentication": false
 }

@@ -1,25 +1,55 @@
 #!/usr/bin/env bash
 # Verifies Docker Desktop File Sharing is restricted to ~/ai-workspace and
-# ~/.ai-dev by asking Docker to bind-mount the home directory itself, which
-# must be refused.
-set -euo pipefail
+# ~/.ai-dev: Docker must refuse to bind-mount the home directory itself, and
+# Docker Desktop's settings must list nothing outside those two directories.
+# Mount probes alone cannot cover the other default entries: /var/folders,
+# for one, mounts an empty directory from the VM even when it is not shared.
+set -uo pipefail
 
-probe="${1:-$HOME}"
+settings="${AI_DEV_DOCKER_SETTINGS:-$HOME/Library/Group Containers/group.com.docker/settings-store.json}"
+allowed=("$HOME/ai-workspace" "$HOME/.ai-dev")
+fix="Restrict Docker Desktop -> Settings -> Resources -> File sharing to ~/ai-workspace and ~/.ai-dev."
+failures=0
 
 if ! docker info >/dev/null 2>&1; then
   echo "FAIL Docker is not running" >&2
   exit 1
 fi
 
-if out="$(docker run --rm -v "$probe:/probe:ro" alpine true 2>&1)"; then
-  echo "FAIL Docker can mount $probe. Restrict Docker Desktop -> Settings -> Resources -> File sharing to ~/ai-workspace and ~/.ai-dev." >&2
+if out="$(docker run --rm -v "$HOME:/probe:ro" alpine true 2>&1)"; then
+  echo "FAIL Docker can mount $HOME. $fix" >&2
+  failures=$((failures + 1))
+elif printf '%s' "$out" | grep -qi 'not shared from the host'; then
+  echo "PASS Docker cannot mount $HOME (File Sharing is restricted)"
+else
+  echo "FAIL could not verify File Sharing; docker said: $out" >&2
+  failures=$((failures + 1))
+fi
+
+# The settings file is JSON; read the FilesharingDirectories array without a
+# JSON parser (paths contain no quotes or commas).
+if [ ! -r "$settings" ]; then
+  echo "FAIL cannot read Docker Desktop settings at $settings" >&2
   exit 1
 fi
-
-if printf '%s' "$out" | grep -qi 'not shared from the host'; then
-  echo "PASS Docker cannot mount $probe (File Sharing is restricted)"
-  exit 0
+shared="$(tr -d '\n' < "$settings" \
+  | grep -oE '"[Ff]ilesharingDirectories" *: *\[[^]]*\]' \
+  | sed -E 's/^[^[]*\[//; s/\]$//' | tr ',' '\n' \
+  | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//' | grep -v '^$')"
+extra=""
+while IFS= read -r dir; do
+  [ -n "$dir" ] || continue
+  inside=0
+  for a in "${allowed[@]}"; do
+    case "$dir" in "$a" | "$a"/*) inside=1 ;; esac
+  done
+  [ "$inside" = 1 ] || extra="$extra $dir"
+done <<< "$shared"
+if [ -n "$extra" ]; then
+  echo "FAIL Docker Desktop also shares:$extra. $fix" >&2
+  failures=$((failures + 1))
+else
+  echo "PASS Docker Desktop shares only: $(printf '%s\n' "$shared" | tr '\n' ' ' | sed 's/ $//')"
 fi
 
-echo "FAIL could not verify File Sharing; docker said: $out" >&2
-exit 1
+[ "$failures" -eq 0 ]

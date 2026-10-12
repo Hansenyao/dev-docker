@@ -10,6 +10,13 @@
 # (including SSH_AUTH_SOCK) instead of ours. VSCODE_CLI=1 tells VS Code it was
 # started from a shell, so it keeps this environment instead of re-reading it
 # from a login shell.
+#
+# While a window is attached, the extension answers git and Docker credential
+# requests from inside the container by asking the Mac, whatever its settings
+# say. Git on the Mac side therefore reads no system or global config, so it
+# has no credential helper (the Keychain one comes from the system config),
+# and cannot prompt. Docker credentials are not blocked: do not `docker login`
+# on the Mac.
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -34,5 +41,6 @@ if ! "$code_bin" "${dirs[@]}" --list-extensions | grep -qx 'ms-vscode-remote.rem
   "$code_bin" "${dirs[@]}" --install-extension ms-vscode-remote.remote-containers
 fi
 
-env -u SSH_AUTH_SOCK -u ELECTRON_RUN_AS_NODE VSCODE_CLI=1 \
+env -u SSH_AUTH_SOCK -u ELECTRON_RUN_AS_NODE -u GIT_ASKPASS -u SSH_ASKPASS \
+  VSCODE_CLI=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
   nohup "$app_bin" "${dirs[@]}" --new-window "$@" >/dev/null 2>&1 &

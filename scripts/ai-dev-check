@@ -10,6 +10,7 @@ socket_dir="${AI_DEV_SOCKET_DIR:-/tmp}"
 allowed_mounts="${AI_DEV_ALLOWED_MOUNTS:-/workspace /home/ai-coder/.claude /home/ai-coder/.config/git /run/secrets/ai-dev}"
 docker_config="${AI_DEV_DOCKER_CONFIG:-${DOCKER_CONFIG:-$HOME/.docker}/config.json}"
 system_gitconfig="${GIT_CONFIG_SYSTEM:-/etc/gitconfig}"
+docker_sock="${AI_DEV_DOCKER_SOCK:-/var/run/docker.sock}"
 
 failures=0
 ok() { printf 'PASS %s\n' "$1"; }
@@ -50,6 +51,58 @@ if [ -f "$docker_config" ] && grep -qE '"(credsStore|credHelpers)"' "$docker_con
 else
   ok "no Docker credential helper"
 fi
+
+# Dev Containers IPC: while a VS Code window is attached, any process can ask
+# the extension for the Mac's git and Docker credentials through this socket,
+# whatever the extension settings say. scripts/host/ai-code empties those
+# credential sources on the Mac; probe that nothing comes back. The replies
+# are matched without being printed. A request that times out counts as a
+# leak: the Mac may be showing a Keychain prompt that someone could accept.
+# ipc_probe SOCKET LABEL JSON SECRET_REGEX: appends LABEL to $leaks on a leak.
+ipc_probe() {
+  local reply status
+  reply="$(curl -s --max-time 10 --unix-socket "$1" -X POST -d "$3" http://localhost/ 2>/dev/null)"
+  status=$?
+  case "$status" in
+    0) if printf '%s' "$reply" | grep -q "$4"; then leaks="$leaks $2"; fi ;;
+    7) ;; # nothing listening: the window that created the socket is gone
+    *) leaks="$leaks $2(no reply, curl exit $status)" ;;
+  esac
+}
+shopt -s nullglob
+ipc_sockets=("$socket_dir"/vscode-remote-containers-ipc-*.sock)
+shopt -u nullglob
+if [ "${#ipc_sockets[@]}" -eq 0 ]; then
+  ok "no Dev Containers IPC socket in $socket_dir"
+else
+  leaks=""
+  for sock in "${ipc_sockets[@]}"; do
+    ipc_probe "$sock" "git(github.com)" \
+      '{"args":["git-credential-helper","get"],"stdin":"protocol=https\nhost=github.com\n\n"}' \
+      'password=[^\\"]'
+    ipc_probe "$sock" "docker(index.docker.io)" \
+      '{"args":["docker-credential-helper","get"],"stdin":"https://index.docker.io/v1/"}' \
+      '\\"Secret\\":\\"[^\\]'
+  done
+  if [ -n "$leaks" ]; then
+    bad "Dev Containers IPC hands out host credentials:$leaks (attach only from \`make vscode\`)"
+  else
+    ok "Dev Containers IPC hands out no git or Docker credentials"
+  fi
+fi
+
+# Docker: the daemon must be the nested engine, never Docker Desktop's.
+if [ -e "$docker_sock" ]; then
+  bad "$docker_sock exists: a host Docker socket may be mounted"
+else
+  ok "no Docker socket at $docker_sock"
+fi
+engine_os="$(timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null)"
+case "$engine_os" in
+  "") ok "docker daemon not reachable, so not Docker Desktop's" ;;
+  *"Docker Desktop"*) bad "docker talks to the Docker Desktop engine, not the nested one" ;;
+  *) ok "docker talks to the nested engine ($engine_os)" ;;
+esac
 
 # Host bind mounts: only the allowed mount points may come from macOS.
 host_mounts="$(awk '{

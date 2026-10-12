@@ -23,19 +23,23 @@ cat > "$app/Contents/MacOS/Code" <<EOF
 #!/usr/bin/env bash
 printf 'app sock=[%s] node=[%s] cli=[%s] args=[%s]\n' "\${SSH_AUTH_SOCK:-}" \
   "\${ELECTRON_RUN_AS_NODE:-}" "\${VSCODE_CLI:-}" "\$*" >> "$tmp/log"
+printf 'git nosystem=[%s] global=[%s] prompt=[%s] askpass=[%s]\n' \
+  "\${GIT_CONFIG_NOSYSTEM:-}" "\${GIT_CONFIG_GLOBAL:-}" "\${GIT_TERMINAL_PROMPT:-}" \
+  "\${GIT_ASKPASS:-}" >> "$tmp/log"
 EOF
 chmod +x "$app/Contents/Resources/app/bin/code" "$app/Contents/MacOS/Code"
 base="$tmp/Application Support/ai-dev-vscode"
 
 run_launcher() {
-  SSH_AUTH_SOCK=/private/tmp/launchd-agent ELECTRON_RUN_AS_NODE=1 AI_DEV_CODE_APP="$app" \
+  SSH_AUTH_SOCK=/private/tmp/launchd-agent ELECTRON_RUN_AS_NODE=1 GIT_ASKPASS=/askpass.sh \
+    AI_DEV_CODE_APP="$app" \
     AI_DEV_VSCODE_DIR="$base" bash "$launcher" "$@"
 }
 
 # The app is started in the background; wait for it to log its start.
 wait_for_app() {
   for _ in $(seq 50); do
-    grep -q '^app ' "$tmp/log" 2>/dev/null && return 0
+    grep -q '^git ' "$tmp/log" 2>/dev/null && return 0
     sleep 0.1
   done
   return 1
@@ -47,6 +51,8 @@ wait_for_app
 log="$(cat "$tmp/log")"
 assert_contains "starts the app binary, not the CLI (the CLI uses open, which restores launchd's environment)" "$log" "app sock=["
 assert_contains "SSH_AUTH_SOCK never reaches VS Code" "$log" "app sock=[] node=[] cli=[1]"
+assert_contains "git on the Mac side reads no system or global config and cannot prompt" "$log" \
+  "git nosystem=[1] global=[/dev/null] prompt=[0] askpass=[]"
 assert_contains "uses the dedicated user data dir" "$log" "--user-data-dir $base/data"
 assert_contains "uses the dedicated extensions dir" "$log" "--extensions-dir $base/extensions"
 assert_contains "installs Dev Containers on first launch" "$log" "cli args=[--user-data-dir $base/data --extensions-dir $base/extensions --install-extension ms-vscode-remote.remote-containers]"

@@ -35,7 +35,7 @@ Provide a long-running Docker development environment on macOS in which Claude C
 
 ```
 macOS
-├── ~/ai-workspace/            ──bind──▶ /workspace                      (dev, docker)
+├── ~/ai-workspace/            ──bind──▶ /workspace                      (dev, engine)
 ├── ~/.ai-dev/claude/          ──bind──▶ /home/ai-coder/.claude          (dev)
 ├── ~/.ai-dev/git/             ──bind──▶ /home/ai-coder/.config/git      (dev)
 └── ~/.ai-dev/secrets/ (ro)    ──bind──▶ /run/secrets/ai-dev             (dev)
@@ -48,7 +48,7 @@ Docker Desktop VM (File Sharing limited to ~/ai-workspace and ~/.ai-dev)
           default user ai-coder; DOCKER_HOST=tcp://127.0.0.1:2375
 ```
 
-- `dev` and `docker` share a network namespace: ports published by nested containers are reachable from `dev` at `localhost:<port>`. dockerd listens only on loopback, so no TLS is configured.
+- `dev` and `engine` share a network namespace: ports published by nested containers are reachable from `dev` at `localhost:<port>`. dockerd listens only on loopback, so no TLS is configured.
 - `dev` waits for dockerd via `depends_on: condition: service_healthy`.
 - No ports are published to the host; dev server ports are forwarded to macOS by VS Code.
 
@@ -96,7 +96,7 @@ Expected image size 4–5 GB; first build 10–20 minutes.
 
 | Content | Host location / volume | Container path | Notes |
 |---|---|---|---|
-| Project code | `~/ai-workspace` | `/workspace` | Mounted in both `dev` and `docker` at the same path |
+| Project code | `~/ai-workspace` | `/workspace` | Mounted in both `dev` and `engine` at the same path |
 | Claude state | `~/.ai-dev/claude` | `/home/ai-coder/.claude` | Sessions, login, settings, `.claude.json` |
 | Git global config | `~/.ai-dev/git` | `/home/ai-coder/.config/git` | Git reads the XDG `config` as global config |
 | GitHub tokens | `~/.ai-dev/secrets/github/<owner>` | `/run/secrets/ai-dev/github/<owner>` | One file per owner; `secrets` directory mounted read-only |
@@ -106,7 +106,7 @@ Expected image size 4–5 GB; first build 10–20 minutes.
 | Go module cache | volume `ai-dev-gomod` | `/home/ai-coder/go/pkg/mod` | |
 | Maven repository | volume `ai-dev-m2` | `/home/ai-coder/.m2` | |
 | Shell history | volume `ai-dev-history` | `/home/ai-coder/.history` | |
-| Nested Docker data | volume `ai-dev-docker-data` | `/var/lib/docker` (docker service) | Delete the volume to wipe it |
+| Nested Docker data | volume `ai-dev-docker-data` | `/var/lib/docker` (engine service) | Delete the volume to wipe it |
 
 Design notes:
 - Git config and the token are mounted as **directories**, not single files. Git writes config via rename, which fails on a single-file bind mount; and when a macOS editor replaces a file, a single-file mount keeps pointing at the old inode, so a rotated token would not take effect.
@@ -153,6 +153,9 @@ Therefore the AI environment uses a **dedicated VS Code instance** instead of th
 - `scripts/host/ai-code` starts the app binary (`Visual Studio Code.app/Contents/MacOS/Code`) directly, with `SSH_AUTH_SOCK` removed from the environment and `VSCODE_CLI=1` (so VS Code keeps that environment instead of re-reading it from a login shell), and with its own `--user-data-dir` and `--extensions-dir` under `~/Library/Application Support/ai-dev-vscode/` (outside the File Sharing list, so the AI cannot reach it even after a VM escape).
 - On launch it installs the Dev Containers extension into that extensions dir if missing (via the `code` CLI) and writes `vscode/settings.json` into that instance's user settings: `copyGitConfig: false`, `gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`.
 - The image carries the settings that actually take effect: `config/vscode-machine-settings.json` as `/home/ai-coder/.vscode-server/data/Machine/settings.json` (`gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`), and `config/home-gitconfig` as `~/.gitconfig`, a placeholder with an `[ai-dev]` section so the host one is never copied. `GIT_CONFIG_GLOBAL=/home/ai-coder/.config/git/config` makes git ignore that placeholder and read and write only the mounted global config.
+- **The IPC channel ignores those settings.** While a window is attached, the extension creates `/tmp/vscode-remote-containers-ipc-<id>.sock` and a client script in the container. Any process can send `git-credential-helper get` or `docker-credential-helper get` through it, and the extension answers by running `git credential fill` or the configured `docker-credential-*` helper **on the Mac** (verified 2026-10-12 in extension 0.469.0; a request for github.com made the Mac's `osxkeychain` helper wait on Keychain access). The settings above only stop the extension from registering helpers in the container's config.
+- So `ai-code` also starts the instance with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0` and no `GIT_ASKPASS`/`SSH_ASKPASS`: git on the Mac then has no credential helper (the Keychain helper `osxkeychain` comes from the Command Line Tools system config) and cannot prompt, so it hands out nothing. The extension resolves the Mac environment through a login interactive shell, which keeps these variables but re-reads the user's shell startup files.
+- **Docker credentials are not blocked.** The extension reads `~/.docker/config.json` directly (it ignores `DOCKER_CONFIG`) and runs `docker-credential-<credsStore>` with the login shell's `PATH`, which includes Docker Desktop's helpers. Accepted: the user does not `docker login` on the Mac; `ai-dev-check` fails if a Docker Hub secret comes back. `vscode/settings.json` also sets `git.terminalAuthentication: false` and `github.gitAuthentication: false`.
 - The user's normal VS Code, its settings, and its SSH agent behavior are untouched. The dedicated instance runs alongside it as a separate window.
 - `ai-dev-check` remains the authority on whether any credential was forwarded.
 
@@ -160,7 +163,9 @@ Therefore the AI environment uses a **dedicated VS Code instance** instead of th
 Prints FAIL and exits non-zero if any of these does not hold:
 - `SSH_AUTH_SOCK` is empty, or `ssh-add -l` lists no keys;
 - `git config --show-origin --get-all credential.helper` contains only `ghtoken` from `/etc/gitconfig`;
-- No VS Code–injected git/Docker credential environment variables or sockets exist (e.g. credential helpers tied to `REMOTE_CONTAINERS_IPC`, `/tmp/vscode-ssh-auth-*`);
+- No VS Code–injected git/Docker credential helpers or SSH agent sockets exist (`/tmp/vscode-ssh-auth-*`, `credsStore`/`credHelpers` in `~/.docker/config.json`);
+- Every live `/tmp/vscode-remote-containers-ipc-*.sock` answers a `git-credential-helper get` for github.com and a `docker-credential-helper get` for Docker Hub without a password or secret; a request that times out also fails (the Mac may be waiting on a Keychain prompt). Replies are matched, never printed;
+- `/var/run/docker.sock` does not exist, and `docker info` does not report Docker Desktop as the operating system (the daemon must be the nested engine);
 - No host bind mounts exist other than `/workspace`, `/home/ai-coder/.claude`, `/home/ai-coder/.config/git`, `/run/secrets/ai-dev` (parsed from `/proc/self/mountinfo`);
 - At least one non-empty token file exists in `/run/secrets/ai-dev/github/`; the PASS line lists the owners.
 
@@ -186,9 +191,17 @@ dev-docker/
 │   ├── gh                      # gh wrapper
 │   ├── ai-dev-check
 │   ├── smoke-test
-│   └── host/ai-code            # macOS: dedicated VS Code launcher
+│   └── host/
+│       ├── setup               # macOS: first-time setup
+│       ├── check-file-sharing  # macOS: File Sharing check
+│       └── ai-code             # macOS: dedicated VS Code launcher
+├── config/
+│   ├── gitconfig               # /etc/gitconfig in the image
+│   ├── profile.sh              # /etc/profile.d/ai-dev.sh in the image
+│   ├── home-gitconfig          # placeholder ~/.gitconfig in the image
+│   └── vscode-machine-settings.json  # Dev Containers machine settings in the image
 ├── vscode/settings.json        # user settings for the dedicated VS Code instance
-├── config/vscode-machine-settings.json  # Dev Containers machine settings baked into the image
+├── tests/                      # shell unit tests (make test-unit)
 ├── docs/superpowers/specs/     # this file
 ├── README.md
 └── CLAUDE.md
@@ -203,7 +216,7 @@ dev-docker/
 | `make up` | `docker compose up -d`; first checks that mount sources such as `~/.ai-dev/git` and `~/.ai-dev/secrets` exist, and asks the user to run `make setup` if not |
 | `make down` | `docker compose down` (volumes are kept) |
 | `make shell` | Opens a bash shell in `dev` as ai-coder |
-| `make check` | Host side: `docker run --rm -v "$HOME:/probe:ro" alpine true` **must fail** with Docker Desktop's "not shared from the host" error; in container: runs `ai-dev-check` and `smoke-test` |
+| `make check` | Host side: `docker run --rm -v "$HOME:/probe:ro" alpine true` **must fail** with Docker Desktop's "not shared from the host" error, and `FilesharingDirectories` in Docker Desktop's `settings-store.json` must list nothing outside `~/ai-workspace` and `~/.ai-dev` (a mount probe cannot check `/var/folders`, which mounts an empty VM directory even when not shared); in container: runs `ai-dev-check` and `smoke-test`. `ai-dev-check` runs through `docker exec` here, so it cannot see a VS Code terminal's environment; run it in the attached terminal too |
 | `make vscode` | Runs `scripts/host/ai-code`: opens the dedicated VS Code instance (installs the Dev Containers extension on first run) |
 | `make rebuild` | `build --pull`, then `up -d --force-recreate`; persisted data is unaffected |
 
