@@ -6,7 +6,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/home" "$tmp/sockets" "$tmp/cwd"
-printf 'ghp_x\n' > "$tmp/token"
+mkdir -p "$tmp/tokens"
+printf 'ghp_x\n' > "$tmp/tokens/safeheron"
+printf 'ghp_y\n' > "$tmp/tokens/Hansenyao"
 printf '[credential "https://github.com"]\n\thelper = ghtoken\n' > "$tmp/system-gitconfig"
 : > "$tmp/global-gitconfig"
 cat > "$tmp/mountinfo" <<'MOUNTS'
@@ -23,7 +25,7 @@ run_check() {
     HOME="$tmp/home" \
     GIT_CONFIG_SYSTEM="$tmp/system-gitconfig" \
     GIT_CONFIG_GLOBAL="$tmp/global-gitconfig" \
-    AI_DEV_TOKEN_FILE="$tmp/token" \
+    AI_DEV_TOKEN_DIR="$tmp/tokens" \
     AI_DEV_MOUNTINFO="$tmp/mountinfo" \
     AI_DEV_SOCKET_DIR="$tmp/sockets" \
     "$@" bash "$check")
@@ -32,6 +34,7 @@ run_check() {
 out="$(run_check)"; status=$?
 assert_eq "clean environment passes" "0" "$status"
 assert_not_contains "clean environment has no FAIL lines" "$out" "FAIL"
+assert_contains "lists the token owners" "$out" "GitHub tokens for: Hansenyao safeheron"
 
 out="$(run_check SSH_AUTH_SOCK=/tmp/vscode-ssh-auth-1.sock)"; status=$?
 assert_eq "SSH_AUTH_SOCK set fails" "1" "$status"
@@ -68,9 +71,14 @@ assert_eq "unexpected host mount fails" "1" "$status"
 assert_contains "unexpected mount reported" "$out" "/home/ai-coder/.ssh"
 cp "$tmp/mountinfo.ok" "$tmp/mountinfo"
 
-: > "$tmp/token"
+: > "$tmp/tokens/safeheron"
+: > "$tmp/tokens/Hansenyao"
 out="$(run_check)"; status=$?
-assert_eq "empty token fails" "1" "$status"
-assert_contains "token reported" "$out" "FAIL GitHub token"
+assert_eq "only empty token files fails" "1" "$status"
+assert_contains "token reported" "$out" "FAIL no GitHub token"
+
+rm -rf "$tmp/tokens"
+out="$(run_check)"; status=$?
+assert_eq "missing token directory fails" "1" "$status"
 
 finish

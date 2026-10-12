@@ -21,7 +21,7 @@ Provide a long-running Docker development environment on macOS in which Claude C
 |---|---|---|
 | AI accidentally deletes or modifies macOS files outside the project directory | Yes | Mount only `~/ai-workspace` and `~/.ai-dev`; restrict Docker Desktop File Sharing |
 | AI reads sensitive macOS data (`~/.ssh`, `~/.aws`, browser data, wallets, etc.) | Yes | Same as above; disable VS Code SSH agent / git credential / Docker credential forwarding |
-| AI accesses all of the user's GitHub repositories under their identity | Yes | Provide only a Fine-grained Token scoped to selected repositories |
+| AI accesses all of the user's GitHub repositories under their identity | Yes | Provide only Fine-grained Tokens (one per owner) scoped to selected repositories |
 | Data inside the container (workspace code, token) is exfiltrated over the network | **No** (accepted) | No egress filtering; damage limited by token least privilege and revocability |
 | AI modifies CI to read repository Actions secrets | Yes | Token is not granted the Workflows permission |
 
@@ -99,7 +99,7 @@ Expected image size 4–5 GB; first build 10–20 minutes.
 | Project code | `~/ai-workspace` | `/workspace` | Mounted in both `dev` and `docker` at the same path |
 | Claude state | `~/.ai-dev/claude` | `/home/ai-coder/.claude` | Sessions, login, settings, `.claude.json` |
 | Git global config | `~/.ai-dev/git` | `/home/ai-coder/.config/git` | Git reads the XDG `config` as global config |
-| GitHub token | `~/.ai-dev/secrets/github-token` | `/run/secrets/ai-dev/github-token` | Directory mounted read-only |
+| GitHub tokens | `~/.ai-dev/secrets/github/<owner>` | `/run/secrets/ai-dev/github/<owner>` | One file per owner; `secrets` directory mounted read-only |
 | General cache (pip, uv, go-build, etc.) | volume `ai-dev-cache` | `/home/ai-coder/.cache` | |
 | npm cache | volume `ai-dev-npm` | `/home/ai-coder/.npm` | |
 | Cargo registry | volume `ai-dev-cargo-registry` | `/opt/cargo/registry` | |
@@ -117,20 +117,22 @@ Design notes:
 ## 5. Credentials and Security
 
 ### GitHub token
-- macOS file `~/.ai-dev/secrets/github-token`, mode 600.
-- `/usr/local/bin/git-credential-ghtoken`: on a `get` request for `github.com`, outputs `username=x-access-token` and `password=<file contents>`; exits with an error if the file is missing or empty.
+- A fine-grained token belongs to exactly one resource owner (the user's account or one organization), and the container must reach repositories of several owners. So there is **one token file per owner**: `~/.ai-dev/secrets/github/<owner>` on macOS (directory mode 700, files mode 600), named after the GitHub user or organization; matching is case-insensitive. Adding an owner is adding a file; no restart.
+- `/usr/local/bin/git-credential-ghtoken`: on a `get` request for `github.com`, takes the owner from the first segment of the repository path and outputs `username=x-access-token` and `password=<that owner's token>`. If git sent no path, or the owner has no non-empty token file, it prints the reason (naming the file to add) on stderr and replies `quit=1`, so git fails immediately instead of prompting for a password.
 - `/etc/gitconfig` (system level, unaffected by VS Code or user global config):
   ```
   [credential "https://github.com"]
       helper = ghtoken
+      useHttpPath = true
   [url "https://github.com/"]
       insteadOf = git@github.com:
       insteadOf = ssh://git@github.com/
   ```
-  Effect: repositories cloned on macOS with SSH URLs transparently use HTTPS + token inside the container.
-- `/usr/local/bin/gh` wrapper: reads the token from the file into `GH_TOKEN` on every invocation, then `exec /usr/bin/gh`. Token rotation takes effect immediately and does not depend on shell startup files.
+  `useHttpPath` makes git pass the repository path to the helper. The `url` rewrite makes repositories cloned on macOS with SSH URLs transparently use HTTPS + token inside the container.
+- `/usr/local/bin/gh` wrapper: on every invocation determines the owner from `-R`/`--repo` (`owner/repo`, `HOST/owner/repo`, or a URL), else `GH_REPO`, else the current repository's `origin` URL; loads that owner's token into `GH_TOKEN`, then `exec /usr/bin/gh`. With no determinable owner it uses the only token if exactly one exists, otherwise runs without a token and tells the user to pass `-R owner/repo`. An owner without a token runs without a token, with a warning naming the file to add. Rotation takes effect immediately and does not depend on shell startup files.
 
-### Recommended token permissions (documented in README)
+### Recommended token permissions (documented in README), per owner
+- Resource owner: the user's account or the organization (org admins may need to approve the token)
 - Repository access: Only select repositories
 - Contents: Read and write
 - Pull requests: Read and write (optional, for `gh pr create`)
@@ -156,7 +158,7 @@ Prints FAIL and exits non-zero if any of these does not hold:
 - `git config --show-origin --get-all credential.helper` contains only `ghtoken` from `/etc/gitconfig`;
 - No VS Code–injected git/Docker credential environment variables or sockets exist (e.g. credential helpers tied to `REMOTE_CONTAINERS_IPC`, `/tmp/vscode-ssh-auth-*`);
 - No host bind mounts exist other than `/workspace`, `/home/ai-coder/.claude`, `/home/ai-coder/.config/git`, `/run/secrets/ai-dev` (parsed from `/proc/self/mountinfo`);
-- The token file exists and is non-empty.
+- At least one non-empty token file exists in `/run/secrets/ai-dev/github/`; the PASS line lists the owners.
 
 ### Container configuration
 - `dev`: `container_name: ai-dev`; unprivileged; no `/var/run/docker.sock` mount; no host networking; default Docker capabilities retained; no `no-new-privileges` (it would break sudo); `init: true`; command `sleep infinity`; `restart: unless-stopped`.
@@ -191,7 +193,7 @@ dev-docker/
 
 | Command | Behavior |
 |---|---|
-| `make setup` | Creates `~/ai-workspace` and `~/.ai-dev/{claude,git,secrets}`; interactively writes `user.name`/`user.email` to `~/.ai-dev/git/config` (skipped if present); if the token file is missing, explains how to create it and sets mode 600; reminds the user to restrict File Sharing |
+| `make setup` | Creates `~/ai-workspace` and `~/.ai-dev/{claude,git,secrets/github}`; interactively writes `user.name`/`user.email` to `~/.ai-dev/git/config` (skipped if present); sets existing token files to mode 600 and lists their owners, or, if there are none, explains how to create one token per owner; reminds the user to restrict File Sharing |
 | `make build` | Builds the image |
 | `make up` | `docker compose up -d`; first checks that mount sources such as `~/.ai-dev/git` and `~/.ai-dev/secrets` exist, and asks the user to run `make setup` if not |
 | `make down` | `docker compose down` (volumes are kept) |
@@ -204,7 +206,7 @@ dev-docker/
 
 ### First time
 1. Restrict Docker Desktop File Sharing.
-2. Create a Fine-grained Token on GitHub.
+2. Create one Fine-grained Token per owner on GitHub and save each as `~/.ai-dev/secrets/github/<owner>`.
 3. `make setup` → `make build` → `make up`.
 4. `make vscode` to open the dedicated VS Code instance.
 5. In that instance: Cmd+Shift+P → Dev Containers: Attach to Running Container → `ai-dev` → open `/workspace/<project>`.
@@ -227,10 +229,10 @@ dev-docker/
 ### Acceptance criteria
 1. `make check` passes.
 2. After `make down && docker compose rm -f && make up`, Claude needs no re-login and `claude --continue` resumes the previous session in the same project directory.
-3. Push to a token-authorized repository succeeds from the container; push to an unauthorized repository fails.
+3. Push to token-authorized repositories of at least two different owners succeeds from the container; push to a repository no token covers fails immediately with the helper's "no token for owner" message.
 4. A repository cloned with an SSH URL can push from the container via HTTPS + token.
 5. After VS Code attaches, `ai-dev-check` still passes, i.e. VS Code injected no host credentials.
-6. After replacing the token file on macOS, without restarting the container, `git push` and `gh` use the new token.
+6. After replacing an owner's token file on macOS, without restarting the container, `git push` and `gh` use the new token.
 
 ## 10. Known Limitations and Risks
 - Data inside the container (workspace code, token) can be exfiltrated over the network (accepted).

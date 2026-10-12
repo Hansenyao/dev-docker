@@ -1,16 +1,74 @@
 #!/usr/bin/env bash
-# Wrapper for the GitHub CLI. Loads the mounted token into GH_TOKEN on every
-# call, so a token rotated on macOS takes effect without restarting anything.
+# Wrapper for the GitHub CLI. Picks the token of the repository owner from
+# /run/secrets/ai-dev/github/<owner> (case-insensitive) on every call, so
+# tokens added or rotated on macOS take effect without restarting anything.
+# The owner comes from -R/--repo, then GH_REPO, then the current repo's origin.
 set -euo pipefail
 
-token_file="${AI_DEV_TOKEN_FILE:-/run/secrets/ai-dev/github-token}"
+token_dir="${AI_DEV_TOKEN_DIR:-/run/secrets/ai-dev/github}"
 real_gh="${AI_DEV_REAL_GH:-/usr/bin/gh}"
 
-if [ -s "$token_file" ]; then
-  GH_TOKEN="$(tr -d '[:space:]' < "$token_file")"
-  export GH_TOKEN
+warn() { echo "gh wrapper: $1; running gh without a token" >&2; }
+
+# token_for_owner OWNER: prints the owner's token, or fails if there is none.
+token_for_owner() {
+  local owner f name
+  owner="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  for f in "$token_dir"/*; do
+    [ -f "$f" ] && [ -s "$f" ] || continue
+    name="$(basename "$f" | tr '[:upper:]' '[:lower:]')"
+    if [ "$name" = "$owner" ]; then
+      tr -d '[:space:]' < "$f"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# owner_from_repo SPEC: owner from owner/repo, HOST/owner/repo, or a GitHub URL.
+owner_from_repo() {
+  local spec="$1"
+  spec="${spec#*://}"
+  spec="${spec#*@}"
+  spec="${spec/://}"
+  spec="${spec#github.com/}"
+  printf '%s' "${spec%%/*}"
+}
+
+repo_spec=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in
+    -R | --repo) repo_spec="$arg" ;;
+  esac
+  case "$arg" in
+    --repo=*) repo_spec="${arg#--repo=}" ;;
+  esac
+  prev="$arg"
+done
+if [ -z "$repo_spec" ]; then repo_spec="${GH_REPO:-}"; fi
+if [ -z "$repo_spec" ]; then repo_spec="$(git remote get-url origin 2>/dev/null || true)"; fi
+
+owner=""
+if [ -n "$repo_spec" ]; then owner="$(owner_from_repo "$repo_spec")"; fi
+
+if [ -n "$owner" ]; then
+  if token="$(token_for_owner "$owner")"; then
+    export GH_TOKEN="$token"
+  else
+    warn "no token for owner $owner (save one on macOS as ~/.ai-dev/secrets/github/$owner)"
+  fi
 else
-  echo "gh wrapper: token file $token_file is missing or empty; running gh without a token" >&2
+  tokens=()
+  for f in "$token_dir"/*; do
+    if [ -f "$f" ] && [ -s "$f" ]; then tokens+=("$f"); fi
+  done
+  if [ "${#tokens[@]}" -eq 1 ]; then
+    GH_TOKEN="$(tr -d '[:space:]' < "${tokens[0]}")"
+    export GH_TOKEN
+  else
+    warn "cannot tell which owner this command is for; pass -R owner/repo to pick a token"
+  fi
 fi
 
 exec "$real_gh" "$@"

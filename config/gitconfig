@@ -1,7 +1,9 @@
 # System git config for the ai-dev container.
-# GitHub access uses the token mounted at /run/secrets/ai-dev/github-token.
+# GitHub access uses per-owner tokens mounted at /run/secrets/ai-dev/github/<owner>.
+# useHttpPath makes git pass the repository path, which names the owner.
 [credential "https://github.com"]
 	helper = ghtoken
+	useHttpPath = true
 # Repositories cloned on macOS with SSH URLs push over HTTPS + token here.
 [url "https://github.com/"]
 	insteadOf = git@github.com:

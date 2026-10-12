@@ -8,10 +8,10 @@ set -euo pipefail
 workspace="$HOME/ai-workspace"
 state="$HOME/.ai-dev"
 git_config="$state/git/config"
-token_file="$state/secrets/github-token"
+token_dir="$state/secrets/github"
 
-mkdir -p "$workspace" "$state/claude" "$state/git" "$state/secrets"
-chmod 700 "$state" "$state/secrets"
+mkdir -p "$workspace" "$state/claude" "$state/git" "$token_dir"
+chmod 700 "$state" "$state/secrets" "$token_dir"
 
 if git config --file "$git_config" user.name >/dev/null 2>&1 &&
   git config --file "$git_config" user.email >/dev/null 2>&1; then
@@ -28,21 +28,28 @@ else
   echo "Wrote $git_config"
 fi
 
-if [ -s "$token_file" ]; then
-  chmod 600 "$token_file"
-  echo "GitHub token found at $token_file"
+owners=""
+for f in "$token_dir"/*; do
+  [ -f "$f" ] && [ -s "$f" ] || continue
+  chmod 600 "$f"
+  owners="$owners $(basename "$f")"
+done
+if [ -n "$owners" ]; then
+  echo "GitHub tokens found for:$owners"
 else
   cat <<EOF
 
-No GitHub token yet. Create a fine-grained token at
+No GitHub token yet. A fine-grained token covers a single owner, so create one
+per owner (your account and each organization) at
   https://github.com/settings/personal-access-tokens/new
+  - Resource owner: the account or organization
   - Repository access: Only select repositories (the ones the AI may push to)
   - Contents: Read and write
   - Pull requests: Read and write (optional, for gh pr create)
   - Do NOT grant Workflows
   - Expiration: 90 days
-Copy it, then run:
-  pbpaste > "$token_file" && chmod 600 "$token_file"
+Save each one under the owner's GitHub name, e.g.:
+  pbpaste > "$token_dir/<owner>" && chmod 600 "$token_dir/<owner>"
 EOF
 fi
 

@@ -104,9 +104,12 @@ section "Git and GitHub wiring"
 expect "git credential helper registered" "ghtoken" git config --system --get credential.https://github.com.helper
 expect "scp-style GitHub URL rewritten to HTTPS" "https://github.com/o/r.git" git ls-remote --get-url git@github.com:o/r.git
 expect "ssh:// GitHub URL rewritten to HTTPS" "https://github.com/o/r.git" git ls-remote --get-url ssh://git@github.com/o/r.git
-printf 'ghp_smoke\n' > "$work/token"
-expect "git credential fill uses the token file" "password=ghp_smoke" bash -c \
-  "printf 'protocol=https\nhost=github.com\n\n' | AI_DEV_TOKEN_FILE='$work/token' GIT_TERMINAL_PROMPT=0 git credential fill | grep '^password='"
+expect "git passes the repository path to helpers" "true" git config --system --get credential.https://github.com.useHttpPath
+mkdir -p "$work/tokens" && printf 'ghp_smoke\n' > "$work/tokens/SmokeOrg"
+expect "git credential fill picks the owner's token" "password=ghp_smoke" bash -c \
+  "printf 'url=https://github.com/smokeorg/r.git\n\n' | AI_DEV_TOKEN_DIR='$work/tokens' git credential fill | grep '^password='"
+expect "unknown owner fails without prompting" "1" bash -c \
+  "printf 'url=https://github.com/nobody/r.git\n\n' | AI_DEV_TOKEN_DIR='$work/tokens' git credential fill 2>&1 >/dev/null | grep -c 'told us to quit'"
 expect "gh resolves to the wrapper" "/usr/local/bin/gh" command -v gh
 
 if [ "${SMOKE_SKIP_DOCKER:-0}" = "1" ]; then

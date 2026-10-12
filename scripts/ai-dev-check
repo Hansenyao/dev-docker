@@ -4,7 +4,7 @@
 # See docs/superpowers/specs/2026-10-12-ai-dev-container-design.md, section 5.
 set -uo pipefail
 
-token_file="${AI_DEV_TOKEN_FILE:-/run/secrets/ai-dev/github-token}"
+token_dir="${AI_DEV_TOKEN_DIR:-/run/secrets/ai-dev/github}"
 mountinfo="${AI_DEV_MOUNTINFO:-/proc/self/mountinfo}"
 socket_dir="${AI_DEV_SOCKET_DIR:-/tmp}"
 allowed_mounts="${AI_DEV_ALLOWED_MOUNTS:-/workspace /home/ai-coder/.claude /home/ai-coder/.config/git /run/secrets/ai-dev}"
@@ -69,11 +69,15 @@ else
   ok "host mounts are limited to: $allowed_mounts"
 fi
 
-# GitHub token.
-if [ -s "$token_file" ]; then
-  ok "GitHub token file present"
+# GitHub tokens: one non-empty file per repository owner.
+owners=""
+for f in "$token_dir"/*; do
+  if [ -f "$f" ] && [ -s "$f" ]; then owners="$owners $(basename "$f")"; fi
+done
+if [ -n "$owners" ]; then
+  ok "GitHub tokens for:$owners"
 else
-  bad "GitHub token file $token_file is missing or empty"
+  bad "no GitHub token in $token_dir (expected one file per owner)"
 fi
 
 if [ "$failures" -eq 0 ]; then

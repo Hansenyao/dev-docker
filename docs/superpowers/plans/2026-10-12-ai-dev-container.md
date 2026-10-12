@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-12-ai-dev-container-design.md`
 
+## Amendment A1 (2026-10-12): one GitHub token per owner
+
+Fine-grained tokens cover a single owner and the user needs personal and several organizations' repositories. Tasks 1–6 were implemented with a single token file and then amended (TDD) to `~/.ai-dev/secrets/github/<owner>`: the credential helper picks the owner from the repo path (`useHttpPath = true`) and replies `quit=1` when there is no token; the `gh` wrapper picks the owner from `-R`/`--repo`, `GH_REPO`, or `origin`; `ai-dev-check` requires at least one token and lists owners; `make setup` explains one token per owner. Env override `AI_DEV_TOKEN_FILE` became `AI_DEV_TOKEN_DIR` (default `/run/secrets/ai-dev/github`). The code blocks in Tasks 1–6 below show the original single-token version; the repository is authoritative. See spec section 5.
+
 ## Global Constraints
 
 - All file contents (docs, comments, messages printed by scripts) are in English.
@@ -17,7 +21,7 @@
 - Base image `ubuntu:24.04`; versions pinned as `ARG`s at the top of the Dockerfile: Node `24.21.0`, Go `1.27.2`, uv `0.13.0`, Maven `3.9.16`, Java `21` (Temurin). Nested engine image `docker:29.9.0-dind`.
 - Default container user `ai-coder`, UID/GID 1000, passwordless sudo. Ubuntu 24.04 ships a `ubuntu` user with UID 1000 that must be removed first.
 - Toolchains are installed outside `/home/ai-coder` except Claude Code (`~/.local/bin`) and Rust homes (`/opt/rustup`, `/opt/cargo`, owned by ai-coder).
-- Host paths: workspace `~/ai-workspace` → `/workspace`; state `~/.ai-dev/{claude,git,secrets}` → `/home/ai-coder/.claude`, `/home/ai-coder/.config/git`, `/run/secrets/ai-dev` (read-only). Token file: `~/.ai-dev/secrets/github-token`.
+- Host paths: workspace `~/ai-workspace` → `/workspace`; state `~/.ai-dev/{claude,git,secrets}` → `/home/ai-coder/.claude`, `/home/ai-coder/.config/git`, `/run/secrets/ai-dev` (read-only). Token files: one per owner at `~/.ai-dev/secrets/github/<owner>` (see Amendment A1).
 - Never mount `/var/run/docker.sock`, the host's `~/.claude`, `~/.gitconfig`, or `~/.ssh`. `dev` is never privileged.
 - Container names: `ai-dev` (dev), `ai-dev-docker` (dind). Named volumes are prefixed `ai-dev-`.
 - Dedicated VS Code data lives in `~/Library/Application Support/ai-dev-vscode/` (outside File Sharing).
@@ -1325,7 +1329,7 @@ Expected: `Missing /tmp/ai-dev-nohome/ai-workspace - run 'make setup' first.` an
 
 Stop and ask the user to:
 1. Run `make setup` in their own terminal (`! make setup` in Claude Code), entering their git name and email.
-2. Create the fine-grained token as printed and save it with `pbpaste > ~/.ai-dev/secrets/github-token && chmod 600 ~/.ai-dev/secrets/github-token`.
+2. Create one fine-grained token per owner (personal account and each organization) as printed, saving each with `pbpaste > ~/.ai-dev/secrets/github/<owner> && chmod 600 ~/.ai-dev/secrets/github/<owner>`.
 3. In Docker Desktop → Settings → Resources → File sharing, remove every entry and add `~/ai-workspace` and `~/.ai-dev` (as absolute paths, e.g. `/Users/<name>/ai-workspace`), then Apply & restart.
 
 Wait for confirmation before continuing.
@@ -1379,8 +1383,8 @@ Expected: no login prompt; the previous conversation is shown. Afterwards `rm -r
 
 With the user's chosen repositories, in the container:
 1. Clone an authorized repo with an SSH URL on macOS into `~/ai-workspace/`, create a branch, commit, `git push -u origin <branch>` from the container → succeeds.
-2. `git push` to a repository the token does not cover → fails with a 403/permission error.
-3. Replace `~/.ai-dev/secrets/github-token` on macOS with a newly generated token, then without restarting run `gh auth status` and `git push` → both use the new token.
+2. Push to repositories of two different owners (e.g. personal and an organization) → both succeed. `git push` to a repository of an owner with no token file → fails immediately with `no token for owner ...`; to an uncovered repository of a covered owner → 403/permission error.
+3. Replace one owner's token file in `~/.ai-dev/secrets/github/` on macOS with a newly generated token, then without restarting run `gh auth status` and `git push` → both use the new token.
 Delete the test branch afterwards.
 
 - [ ] **Step 4: Docker Desktop restart check (Review Focus 2)**
@@ -1397,7 +1401,7 @@ A Docker development environment for running Claude Code on macOS without giving
 
 - Claude runs in the `ai-dev` container as `ai-coder` and can use `--dangerously-skip-permissions`.
 - It sees only `~/ai-workspace` (mounted at `/workspace`) plus its own state in `~/.ai-dev`.
-- It pushes to GitHub with a fine-grained token limited to the repositories you choose.
+- It pushes to GitHub with fine-grained tokens (one per account or organization) limited to the repositories you choose.
 - It can run Docker (databases, etc.) in a nested engine that is separate from your Docker Desktop containers.
 - Toolchains: Node.js 24, Python 3.12 + uv, C/C++ (GCC, Clang, CMake, Ninja), Rust, Go, Java 21 + Maven, GitHub CLI.
 
@@ -1405,15 +1409,15 @@ Design: `docs/superpowers/specs/2026-10-12-ai-dev-container-design.md`.
 
 ## What is and is not protected
 
-Protected: files outside `~/ai-workspace` and `~/.ai-dev`, your SSH keys and agent, other credentials on the Mac, GitHub repositories the token does not cover, and repository CI secrets (the token has no Workflows permission).
+Protected: files outside `~/ai-workspace` and `~/.ai-dev`, your SSH keys and agent, other credentials on the Mac, GitHub repositories no token covers, and repository CI secrets (the tokens have no Workflows permission).
 
 Not protected: anything inside the container (workspace code, the token) can be sent over the network. Only put projects in `~/ai-workspace` that you are willing to expose to the AI.
 
 ## First-time setup
 
 1. **Restrict Docker Desktop File Sharing (required).** Docker Desktop → Settings → Resources → File sharing: remove all entries and add `/Users/<you>/ai-workspace` and `/Users/<you>/.ai-dev`. The nested Docker engine runs privileged, so this list is the real boundary between the AI and your Mac. Other containers you run that bind-mount paths under `/Users` need their directories added here.
-2. **Create a GitHub fine-grained token** at https://github.com/settings/personal-access-tokens/new: Only select repositories; Contents: Read and write; Pull requests: Read and write (optional); no Workflows; 90-day expiration.
-3. `make setup` — creates the directories, asks for the git name/email used for commits, and tells you where to save the token (`~/.ai-dev/secrets/github-token`).
+2. **Create GitHub fine-grained tokens**, one per owner (a token covers only one account or organization), at https://github.com/settings/personal-access-tokens/new: Resource owner: the account or organization (organization admins may have to approve it); Only select repositories; Contents: Read and write; Pull requests: Read and write (optional); no Workflows; 90-day expiration.
+3. `make setup` — creates the directories, asks for the git name/email used for commits, and tells you where to save the tokens: `~/.ai-dev/secrets/github/<owner>`, named after the GitHub account or organization (case-insensitive).
 4. `make build && make up`
 5. `make check` — must end with `all checks passed`.
 6. `make vscode` — opens a dedicated VS Code window. Cmd+Shift+P → **Dev Containers: Attach to Running Container** → `ai-dev`, then open `/workspace/<project>`.
@@ -1448,7 +1452,7 @@ Always use `make vscode` to attach. The normal VS Code forwards your Mac's SSH a
 | Projects | `~/ai-workspace` → `/workspace` |
 | Claude login, sessions, settings | `~/.ai-dev/claude` |
 | Git identity for container commits | `~/.ai-dev/git/config` |
-| GitHub token | `~/.ai-dev/secrets/github-token` (replace the file to rotate; no restart needed) |
+| GitHub tokens | `~/.ai-dev/secrets/github/<owner>`, one per account or organization (add or replace files any time; no restart needed) |
 | Package caches, shell history | Docker volumes `ai-dev-*` |
 | Nested Docker images/containers | Docker volume `ai-dev-docker-data` (`docker volume rm ai-dev-docker-data` after `make down` wipes it) |
 | Dedicated VS Code data | `~/Library/Application Support/ai-dev-vscode` |
@@ -1461,7 +1465,9 @@ Edit the version `ARG`s at the top of the `Dockerfile` (or nothing, to pick up t
 
 - **`dev` has no network after the `docker` container restarted on its own:** run `make up` to recreate `dev`.
 - **`make check-host` fails:** File Sharing still includes your home directory; see setup step 1.
-- **Push fails with 403:** the repository is not selected in the token, or the token expired.
+- **Push fails with `no token for owner X`:** save a token for that account or organization as `~/.ai-dev/secrets/github/X`.
+- **Push fails with 403:** the repository is not selected in that owner's token, the token expired, or the organization has not approved it.
+- **`gh` warns it cannot tell the owner:** pass `-R owner/repo`.
 ```
 
 - [ ] **Step 6: Write `CLAUDE.md`**
