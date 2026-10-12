@@ -1,0 +1,6 @@
+{
+  "dev.containers.copyGitConfig": false,
+  "dev.containers.gitCredentialHelperConfigLocation": "none",
+  "dev.containers.dockerCredentialHelper": false,
+  "dev.containers.githubCLILoginWithToken": false
+}

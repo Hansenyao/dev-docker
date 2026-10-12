@@ -7,4 +7,4 @@ TEST_IMAGE := buildpack-deps:noble-scm
 # Tests are streamed into a throwaway container with tar because Docker
 # Desktop File Sharing does not include this repository.
 test-unit:
-	tar --no-xattrs -c scripts tests | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'
+	tar --no-xattrs -c scripts tests vscode | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'

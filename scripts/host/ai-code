@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Opens a dedicated VS Code instance for attaching to the ai-dev container.
+# The Dev Containers extension forwards the macOS SSH agent whenever its own
+# process has SSH_AUTH_SOCK set, and has no setting to turn that off, so this
+# instance is started without SSH_AUTH_SOCK. It also uses its own user data
+# and extensions directories, leaving the normal VS Code untouched.
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "$0")/../.." && pwd)"
+code_bin="${AI_DEV_CODE_BIN:-/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code}"
+base="${AI_DEV_VSCODE_DIR:-$HOME/Library/Application Support/ai-dev-vscode}"
+data_dir="$base/data"
+ext_dir="$base/extensions"
+
+if [ ! -x "$code_bin" ]; then
+  echo "VS Code CLI not found at $code_bin" >&2
+  exit 1
+fi
+
+mkdir -p "$data_dir/User" "$ext_dir"
+cp "$repo_dir/vscode/settings.json" "$data_dir/User/settings.json"
+
+code() {
+  env -u SSH_AUTH_SOCK "$code_bin" --user-data-dir "$data_dir" --extensions-dir "$ext_dir" "$@"
+}
+
+if ! code --list-extensions | grep -qx 'ms-vscode-remote.remote-containers'; then
+  code --install-extension ms-vscode-remote.remote-containers
+fi
+
+code --new-window "$@"
