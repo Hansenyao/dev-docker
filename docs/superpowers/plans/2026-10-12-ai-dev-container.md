@@ -138,7 +138,7 @@ TEST_IMAGE := buildpack-deps:noble-scm
 # Tests are streamed into a throwaway container with tar because Docker
 # Desktop File Sharing does not include this repository.
 test-unit:
-	tar -c scripts tests | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'
+	tar --no-xattrs -c scripts tests | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -694,7 +694,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 2: Include `vscode/` in the unit-test tarball**
 
-In `Makefile`, change the `test-unit` recipe's `tar -c scripts tests` to `tar -c scripts tests vscode`.
+In `Makefile`, change the `test-unit` recipe's `tar --no-xattrs -c scripts tests` to `tar --no-xattrs -c scripts tests vscode`.
 
 - [ ] **Step 3: Write the failing test**
 
@@ -1306,7 +1306,7 @@ vscode:
 # Tests are streamed into a throwaway container with tar because Docker
 # Desktop File Sharing does not include this repository.
 test-unit:
-	tar -c scripts tests vscode | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'
+	tar --no-xattrs -c scripts tests vscode | docker run --rm -i $(TEST_IMAGE) bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/run.sh'
 
 # Refuse to start without the mount sources; otherwise Docker would create
 # them itself (or fail with an unclear error).
@@ -1478,7 +1478,7 @@ Infrastructure for a macOS Docker environment ("ai-dev") in which Claude Code ru
 ## Commands
 
 - `make test-unit` — run all script unit tests (`tests/test-*.sh`) in a throwaway `buildpack-deps:noble-scm` container.
-- Run one test file: `tar -c scripts tests vscode | docker run --rm -i buildpack-deps:noble-scm bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/test-ai-dev-check.sh'`
+- Run one test file: `tar --no-xattrs -c scripts tests vscode | docker run --rm -i buildpack-deps:noble-scm bash -c 'mkdir -p /src && cd /src && tar -x && bash tests/test-ai-dev-check.sh'`
 - `make build` / `make up` / `make check` — build the image, start the stack, run the File Sharing check + `ai-dev-check` + `smoke-test`.
 - `docker run --rm -e SMOKE_SKIP_DOCKER=1 ai-dev:latest smoke-test` — smoke-test the image without the nested engine.
 
