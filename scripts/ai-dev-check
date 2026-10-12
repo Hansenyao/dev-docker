@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Verifies that this container cannot reach macOS credentials or files beyond
+# the intended mounts. Exits non-zero if any check fails.
+# See docs/superpowers/specs/2026-10-12-ai-dev-container-design.md, section 5.
+set -uo pipefail
+
+token_file="${AI_DEV_TOKEN_FILE:-/run/secrets/ai-dev/github-token}"
+mountinfo="${AI_DEV_MOUNTINFO:-/proc/self/mountinfo}"
+socket_dir="${AI_DEV_SOCKET_DIR:-/tmp}"
+allowed_mounts="${AI_DEV_ALLOWED_MOUNTS:-/workspace /home/ai-coder/.claude /home/ai-coder/.config/git /run/secrets/ai-dev}"
+docker_config="${AI_DEV_DOCKER_CONFIG:-${DOCKER_CONFIG:-$HOME/.docker}/config.json}"
+system_gitconfig="${GIT_CONFIG_SYSTEM:-/etc/gitconfig}"
+
+failures=0
+ok() { printf 'PASS %s\n' "$1"; }
+bad() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
+
+# SSH agent forwarding (VS Code forwards it whenever its own SSH_AUTH_SOCK is set).
+if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+  bad "SSH_AUTH_SOCK is set ($SSH_AUTH_SOCK): an SSH agent may be forwarded"
+else
+  ok "SSH_AUTH_SOCK is not set"
+fi
+
+shopt -s nullglob
+agent_sockets=("$socket_dir"/vscode-ssh-auth-*.sock)
+shopt -u nullglob
+if [ "${#agent_sockets[@]}" -gt 0 ]; then
+  bad "forwarded SSH agent sockets exist: ${agent_sockets[*]}"
+else
+  ok "no forwarded SSH agent sockets in $socket_dir"
+fi
+
+# Git credential helpers: only ghtoken from the system gitconfig is allowed.
+helpers="$(git config --show-origin --get-regexp '^credential\..*helper$' 2>/dev/null || true)"
+if [ -z "$helpers" ]; then
+  bad "no git credential helper configured (expected ghtoken in $system_gitconfig)"
+else
+  unexpected="$(printf '%s\n' "$helpers" | awk -v origin="file:$system_gitconfig" '$1 != origin || $3 != "ghtoken"')"
+  if [ -n "$unexpected" ]; then
+    bad "unexpected git credential helpers: $unexpected"
+  else
+    ok "git credential helper is only ghtoken from $system_gitconfig"
+  fi
+fi
+
+# Docker credential helper injected by VS Code.
+if [ -f "$docker_config" ] && grep -qE '"(credsStore|credHelpers)"' "$docker_config"; then
+  bad "Docker credential helper configured in $docker_config"
+else
+  ok "no Docker credential helper"
+fi
+
+# Host bind mounts: only the allowed mount points may come from macOS.
+host_mounts="$(awk '{
+  for (i = 1; i <= NF; i++) if ($i == "-") { fs = $(i + 1); break }
+  if (fs ~ /^(virtiofs|fakeowner|grpcfuse|fuse\.grpcfuse|osxfs)$/) print $5
+}' "$mountinfo")"
+extra=""
+for m in $host_mounts; do
+  case " $allowed_mounts " in
+    *" $m "*) ;;
+    *) extra="$extra $m" ;;
+  esac
+done
+if [ -n "$extra" ]; then
+  bad "unexpected host mounts:$extra"
+else
+  ok "host mounts are limited to: $allowed_mounts"
+fi
+
+# GitHub token.
+if [ -s "$token_file" ]; then
+  ok "GitHub token file present"
+else
+  bad "GitHub token file $token_file is missing or empty"
+fi
+
+if [ "$failures" -eq 0 ]; then
+  echo "ai-dev-check: all checks passed"
+  exit 0
+fi
+echo "ai-dev-check: $failures check(s) failed"
+exit 1
