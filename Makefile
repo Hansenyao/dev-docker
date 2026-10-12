@@ -20,11 +20,11 @@ down:
 	$(COMPOSE) down
 
 shell:
-	docker exec -it -u ai-coder -w /workspace ai-dev-container bash
+	docker exec -it -u ai-coder -w /workspace ai-dev bash
 
 check: check-host
-	docker exec -u ai-coder ai-dev-container ai-dev-check
-	docker exec -u ai-coder ai-dev-container smoke-test
+	docker exec -u ai-coder ai-dev ai-dev-check
+	docker exec -u ai-coder ai-dev smoke-test
 
 check-host:
 	@scripts/host/check-file-sharing

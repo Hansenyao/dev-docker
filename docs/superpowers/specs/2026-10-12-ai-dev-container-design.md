@@ -161,7 +161,7 @@ Prints FAIL and exits non-zero if any of these does not hold:
 - At least one non-empty token file exists in `/run/secrets/ai-dev/github/`; the PASS line lists the owners.
 
 ### Container configuration
-- `dev`: `container_name: ai-dev-container`; unprivileged; no `/var/run/docker.sock` mount; no host networking; default Docker capabilities retained; no `no-new-privileges` (it would break sudo); `init: true`; command `sleep infinity`; `restart: unless-stopped`.
+- `dev`: `container_name: ai-dev`; unprivileged; no `/var/run/docker.sock` mount; no host networking; default Docker capabilities retained; no `no-new-privileges` (it would break sudo); `init: true`; command `sleep infinity`; `restart: unless-stopped`.
 - `docker`: `container_name: ai-dev-docker`; `privileged: true` (required for nested Docker); mounts only `~/ai-workspace` and `ai-dev-docker-data`, **not** `~/.ai-dev`; dockerd listens only on `tcp://127.0.0.1:2375`; healthcheck `docker -H tcp://127.0.0.1:2375 info`; `restart: unless-stopped`.
 
 ### Docker Desktop File Sharing (required)
@@ -209,12 +209,12 @@ dev-docker/
 2. Create one Fine-grained Token per owner on GitHub and save each as `~/.ai-dev/secrets/github/<owner>`.
 3. `make setup` → `make build` → `make up`.
 4. `make vscode` to open the dedicated VS Code instance.
-5. In that instance: Cmd+Shift+P → Dev Containers: Attach to Running Container → `ai-dev-container` → open `/workspace/<project>`.
+5. In that instance: Cmd+Shift+P → Dev Containers: Attach to Running Container → `ai-dev` → open `/workspace/<project>`.
 6. Run `claude` in the terminal to log in: there is no browser in the container, so complete authorization in the macOS browser and paste the code back into the terminal.
 7. `make check` passes.
 
 ### Day to day
-- The containers start automatically with Docker Desktop; run `make vscode` and attach (always use the dedicated instance, never the normal VS Code, to connect to `ai-dev-container`).
+- The containers start automatically with Docker Desktop; run `make vscode` and attach (always use the dedicated instance, never the normal VS Code, to connect to `ai-dev`).
 - Run `claude --dangerously-skip-permissions` or `claude --continue`.
 - Clone new projects into `~/ai-workspace/` from macOS or from inside the container; no restart needed.
 
@@ -239,5 +239,5 @@ dev-docker/
 - Nested Docker requires `privileged`; the security boundary falls back to the Docker Desktop VM + File Sharing list.
 - `dev` uses `network_mode: service:docker`: if the `docker` container is restarted on its own, `dev` loses networking and must be recreated with `make up`.
 - Docker 29 `dockerd` refuses a plain-TCP listener unless `--tls=false` is passed explicitly; the `docker` service command passes it (the dind entrypoint does not add its own defaults when the command starts with `dockerd`).
-- Attaching to `ai-dev-container` from the normal VS Code instance would forward the macOS SSH agent; the README must say to use `make vscode` only. If gpg is installed on macOS later, GPG agent forwarding must be re-checked with `ai-dev-check`.
+- Attaching to `ai-dev` from the normal VS Code instance would forward the macOS SSH agent; the README must say to use `make vscode` only. If gpg is installed on macOS later, GPG agent forwarding must be re-checked with `ai-dev-check`.
 - Only verified on x86_64 Macs.
