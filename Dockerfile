@@ -106,5 +106,18 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile min
 RUN curl -fsSL https://claude.ai/install.sh | bash \
     && rm -rf ~/.claude/downloads
 
+# VS Code attach: the Dev Containers settings that stop git and Docker
+# credential forwarding are machine-scoped, so the extension reads them from
+# the container's machine settings, not from the host's user settings.
+# It also copies the host's ~/.gitconfig unless that file already has a
+# section (it ignores copyGitConfig=false here), so a placeholder is installed
+# and git is pointed at the mounted ~/.config/git/config as its only global
+# config.
+ENV GIT_CONFIG_GLOBAL=/home/${USERNAME}/.config/git/config
+RUN mkdir -p ~/.vscode-server/data/Machine
+COPY --chown=${USERNAME}:${USERNAME} config/vscode-machine-settings.json \
+    /home/${USERNAME}/.vscode-server/data/Machine/settings.json
+COPY --chown=${USERNAME}:${USERNAME} config/home-gitconfig /home/${USERNAME}/.gitconfig
+
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

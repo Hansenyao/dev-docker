@@ -1,0 +1,5 @@
+# Not read by git: GIT_CONFIG_GLOBAL points at ~/.config/git/config.
+# The Dev Containers extension copies the host's ~/.gitconfig into this file
+# unless it already has a section other than [filter] or [safe], so keep the
+# section below.
+[ai-dev]

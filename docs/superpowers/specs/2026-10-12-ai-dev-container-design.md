@@ -145,10 +145,14 @@ Verified against the Dev Containers extension 0.470.0 source:
 - Settings exist for git config copying (`dev.containers.copyGitConfig`), the git credential helper (`dev.containers.gitCredentialHelperConfigLocation`), and the Docker credential helper (`dev.containers.dockerCredentialHelper`).
 - **There is no setting for SSH agent forwarding.** The extension forwards the agent whenever the VS Code process environment has a non-empty `SSH_AUTH_SOCK`, and on macOS launchd sets it for every GUI app.
 - GPG agent forwarding happens only if the host has a gpg agent; the host currently has no gpg installed.
+- Those three settings are machine-scoped: once a window is connected to the container, the extension reads them from the container's `~/.vscode-server/data/Machine/settings.json`, not from the host's user settings (verified 2026-10-12: with them only in the dedicated instance's user settings, the extension still installed both credential helpers and copied the host `~/.gitconfig`).
+- The extension appends the host `~/.gitconfig` to the container's unless that file already has a section other than `[filter]` or `[safe]` (an empty file is not enough, verified 2026-10-12); it does not honor `copyGitConfig: false` from machine settings (it treats `false` as unset).
+- On macOS the `code` CLI starts the app through `open`, which gives it launchd's environment, so removing `SSH_AUTH_SOCK` before calling the CLI has no effect (verified 2026-10-12 with `ps -E`).
 
 Therefore the AI environment uses a **dedicated VS Code instance** instead of the user's normal one:
-- `scripts/host/ai-code` launches VS Code with `SSH_AUTH_SOCK` removed from the environment and with its own `--user-data-dir` and `--extensions-dir` under `~/Library/Application Support/ai-dev-vscode/` (outside the File Sharing list, so the AI cannot reach it even after a VM escape).
-- On launch it installs the Dev Containers extension into that extensions dir if missing and writes `vscode/settings.json` into that instance's user settings: `copyGitConfig: false`, `gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`.
+- `scripts/host/ai-code` starts the app binary (`Visual Studio Code.app/Contents/MacOS/Code`) directly, with `SSH_AUTH_SOCK` removed from the environment and `VSCODE_CLI=1` (so VS Code keeps that environment instead of re-reading it from a login shell), and with its own `--user-data-dir` and `--extensions-dir` under `~/Library/Application Support/ai-dev-vscode/` (outside the File Sharing list, so the AI cannot reach it even after a VM escape).
+- On launch it installs the Dev Containers extension into that extensions dir if missing (via the `code` CLI) and writes `vscode/settings.json` into that instance's user settings: `copyGitConfig: false`, `gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`.
+- The image carries the settings that actually take effect: `config/vscode-machine-settings.json` as `/home/ai-coder/.vscode-server/data/Machine/settings.json` (`gitCredentialHelperConfigLocation: "none"`, `dockerCredentialHelper: false`, `githubCLILoginWithToken: false`), and `config/home-gitconfig` as `~/.gitconfig`, a placeholder with an `[ai-dev]` section so the host one is never copied. `GIT_CONFIG_GLOBAL=/home/ai-coder/.config/git/config` makes git ignore that placeholder and read and write only the mounted global config.
 - The user's normal VS Code, its settings, and its SSH agent behavior are untouched. The dedicated instance runs alongside it as a separate window.
 - `ai-dev-check` remains the authority on whether any credential was forwarded.
 
@@ -184,6 +188,7 @@ dev-docker/
 │   ├── smoke-test
 │   └── host/ai-code            # macOS: dedicated VS Code launcher
 ├── vscode/settings.json        # user settings for the dedicated VS Code instance
+├── config/vscode-machine-settings.json  # Dev Containers machine settings baked into the image
 ├── docs/superpowers/specs/     # this file
 ├── README.md
 └── CLAUDE.md

@@ -112,6 +112,16 @@ expect "unknown owner fails without prompting" "1" bash -c \
   "printf 'url=https://github.com/nobody/r.git\n\n' | AI_DEV_TOKEN_DIR='$work/tokens' git credential fill 2>&1 >/dev/null | grep -c 'told us to quit'"
 expect "gh resolves to the wrapper" "/usr/local/bin/gh" command -v gh
 
+section "VS Code attach"
+expect "machine settings disable credential forwarding" "none false false" node -e '
+  const s = JSON.parse(require("fs").readFileSync(process.env.HOME + "/.vscode-server/data/Machine/settings.json", "utf8"));
+  console.log(["gitCredentialHelperConfigLocation", "dockerCredentialHelper", "githubCLILoginWithToken"]
+    .map(k => s["dev.containers." + k]).join(" "));'
+# Same test the Dev Containers extension runs before copying the host's ~/.gitconfig.
+check "~/.gitconfig has a section, so the host one is not copied" bash -c \
+  "grep -e '^\\[' ~/.gitconfig | grep -v -E '^\\[(filter|safe)([[:blank:]]+|\\])'"
+expect "global git config is the mounted file" "$HOME/.config/git/config" printenv GIT_CONFIG_GLOBAL
+
 if [ "${SMOKE_SKIP_DOCKER:-0}" = "1" ]; then
   section "Nested Docker (skipped: SMOKE_SKIP_DOCKER=1)"
 else
