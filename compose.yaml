@@ -3,9 +3,9 @@
 name: ai-dev
 
 services:
-  docker:
+  engine:
     image: docker:29.9.0-dind
-    container_name: ai-dev-docker
+    container_name: ai-dev-engine
     privileged: true
     restart: unless-stopped
     # Starting the command with `dockerd` stops the entrypoint from adding its
@@ -30,9 +30,9 @@ services:
     build: .
     image: ai-dev:latest
     container_name: ai-dev
-    network_mode: service:docker
+    network_mode: service:engine
     depends_on:
-      docker:
+      engine:
         condition: service_healthy
     init: true
     restart: unless-stopped

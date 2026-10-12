@@ -66,7 +66,7 @@ Edit the version `ARG`s at the top of the `Dockerfile` (or nothing, to pick up t
 
 ## Troubleshooting
 
-- **`dev` has no network after the `docker` container restarted on its own:** run `make up` to recreate `dev`.
+- **`dev` has no network after the `engine` container restarted on its own:** run `make up` to recreate `dev`.
 - **`make check-host` fails:** File Sharing still includes your home directory; see setup step 1.
 - **Push fails with `no token for owner X`:** save a token for that account or organization as `~/.ai-dev/secrets/github/X`.
 - **Push fails with 403:** the repository is not selected in that owner's token, the token expired, or the organization has not approved it.

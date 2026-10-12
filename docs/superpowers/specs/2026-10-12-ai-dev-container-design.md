@@ -42,9 +42,9 @@ macOS
 
 Docker Desktop VM (File Sharing limited to ~/ai-workspace and ~/.ai-dev)
 └── compose project ai-dev
-    ├── service docker   (docker:dind, privileged)
+    ├── service engine   (docker:dind, privileged)
     │     dockerd listens on 127.0.0.1:2375; /var/lib/docker → volume ai-dev-docker-data
-    └── service dev      (custom image, unprivileged, network_mode: service:docker)
+    └── service dev      (custom image, unprivileged, network_mode: service:engine)
           default user ai-coder; DOCKER_HOST=tcp://127.0.0.1:2375
 ```
 
@@ -162,10 +162,10 @@ Prints FAIL and exits non-zero if any of these does not hold:
 
 ### Container configuration
 - `dev`: `container_name: ai-dev`; unprivileged; no `/var/run/docker.sock` mount; no host networking; default Docker capabilities retained; no `no-new-privileges` (it would break sudo); `init: true`; command `sleep infinity`; `restart: unless-stopped`.
-- `docker`: `container_name: ai-dev-docker`; `privileged: true` (required for nested Docker); mounts only `~/ai-workspace` and `ai-dev-docker-data`, **not** `~/.ai-dev`; dockerd listens only on `tcp://127.0.0.1:2375`; healthcheck `docker -H tcp://127.0.0.1:2375 info`; `restart: unless-stopped`.
+- `engine`: `container_name: ai-dev-engine`; `privileged: true` (required for nested Docker); mounts only `~/ai-workspace` and `ai-dev-docker-data`, **not** `~/.ai-dev`; dockerd listens only on `tcp://127.0.0.1:2375`; healthcheck `docker -H tcp://127.0.0.1:2375 info`; `restart: unless-stopped`.
 
 ### Docker Desktop File Sharing (required)
-- Why: the AI can run a `--privileged` container in the nested Docker, escape into the `docker` container, and from there into the Docker Desktop VM. The boundary then falls back to the VM, and the host directories the VM can reach are exactly the File Sharing list.
+- Why: the AI can run a `--privileged` container in the nested Docker, escape into the `engine` container, and from there into the Docker Desktop VM. The boundary then falls back to the VM, and the host directories the VM can reach are exactly the File Sharing list.
 - How: Docker Desktop → Settings → Resources → File sharing — keep only `~/ai-workspace` and `~/.ai-dev`; remove the defaults such as `/Users`, `/Volumes`, `/private`, `/tmp`, `/var/folders`.
 - Impact: other local containers that bind-mount paths under `/Users/...` need their directories added back to the list.
 - Accepted residual risk: after escaping into the VM, the AI could see data of other containers and volumes in Docker Desktop.
@@ -237,7 +237,7 @@ dev-docker/
 ## 10. Known Limitations and Risks
 - Data inside the container (workspace code, token) can be exfiltrated over the network (accepted).
 - Nested Docker requires `privileged`; the security boundary falls back to the Docker Desktop VM + File Sharing list.
-- `dev` uses `network_mode: service:docker`: if the `docker` container is restarted on its own, `dev` loses networking and must be recreated with `make up`.
-- Docker 29 `dockerd` refuses a plain-TCP listener unless `--tls=false` is passed explicitly; the `docker` service command passes it (the dind entrypoint does not add its own defaults when the command starts with `dockerd`).
+- `dev` uses `network_mode: service:engine`: if the `engine` container is restarted on its own, `dev` loses networking and must be recreated with `make up`.
+- Docker 29 `dockerd` refuses a plain-TCP listener unless `--tls=false` is passed explicitly; the `engine` service command passes it (the dind entrypoint does not add its own defaults when the command starts with `dockerd`).
 - Attaching to `ai-dev` from the normal VS Code instance would forward the macOS SSH agent; the README must say to use `make vscode` only. If gpg is installed on macOS later, GPG agent forwarding must be re-checked with `ai-dev-check`.
 - Only verified on x86_64 Macs.
