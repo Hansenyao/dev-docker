@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Verifies Docker Desktop File Sharing is restricted to ~/ai-workspace and
+# ~/.ai-dev by asking Docker to bind-mount the home directory itself, which
+# must be refused.
+set -euo pipefail
+
+probe="${1:-$HOME}"
+
+if ! docker info >/dev/null 2>&1; then
+  echo "FAIL Docker is not running" >&2
+  exit 1
+fi
+
+if out="$(docker run --rm -v "$probe:/probe:ro" alpine true 2>&1)"; then
+  echo "FAIL Docker can mount $probe. Restrict Docker Desktop -> Settings -> Resources -> File sharing to ~/ai-workspace and ~/.ai-dev." >&2
+  exit 1
+fi
+
+if printf '%s' "$out" | grep -qi 'not shared from the host'; then
+  echo "PASS Docker cannot mount $probe (File Sharing is restricted)"
+  exit 0
+fi
+
+echo "FAIL could not verify File Sharing; docker said: $out" >&2
+exit 1

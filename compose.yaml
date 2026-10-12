@@ -1,0 +1,65 @@
+# ai-dev: AI development container plus an isolated nested Docker engine.
+# See docs/superpowers/specs/2026-10-12-ai-dev-container-design.md.
+name: ai-dev
+
+services:
+  docker:
+    image: docker:29.9.0-dind
+    container_name: ai-dev-docker
+    privileged: true
+    restart: unless-stopped
+    # Starting the command with `dockerd` stops the entrypoint from adding its
+    # default 0.0.0.0 listener. Docker 29 requires --tls=false for plain TCP.
+    # Loopback only: reachable from the dev service, which shares this
+    # network namespace.
+    command: ["dockerd", "--host=unix:///var/run/docker.sock", "--host=tcp://127.0.0.1:2375", "--tls=false"]
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      # Same path as in dev, so `docker run -v /workspace/...` works.
+      - ${HOME}/ai-workspace:/workspace
+      - docker-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  dev:
+    build: .
+    image: ai-dev:latest
+    container_name: ai-dev
+    network_mode: service:docker
+    depends_on:
+      docker:
+        condition: service_healthy
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ${HOME}/ai-workspace:/workspace
+      - ${HOME}/.ai-dev/claude:/home/ai-coder/.claude
+      - ${HOME}/.ai-dev/git:/home/ai-coder/.config/git
+      - ${HOME}/.ai-dev/secrets:/run/secrets/ai-dev:ro
+      - cache:/home/ai-coder/.cache
+      - npm:/home/ai-coder/.npm
+      - cargo-registry:/opt/cargo/registry
+      - gomod:/home/ai-coder/go/pkg/mod
+      - m2:/home/ai-coder/.m2
+      - history:/home/ai-coder/.history
+
+volumes:
+  docker-data:
+    name: ai-dev-docker-data
+  cache:
+    name: ai-dev-cache
+  npm:
+    name: ai-dev-npm
+  cargo-registry:
+    name: ai-dev-cargo-registry
+  gomod:
+    name: ai-dev-gomod
+  m2:
+    name: ai-dev-m2
+  history:
+    name: ai-dev-history
